@@ -25,7 +25,15 @@ The code requires you to add a file called `first_choices.txt`. This is to deter
 <Name>: <Role Name>
 ...
 ```
-The role name and person name **must** be the same as on the Google form. The code should allow it to be case insensitive (as well as the name) but just to make sure also keep it in the same case. 
+The role name and person name **must** be the same as on the Google form. 
+
+If one role should have more than 1 person elected for it, an additional file named `extra_roles.txt` must be created. This file is OPTIONAL. Format it as follows:
+```txt
+<Role Name>: <Number of people to elect>
+<Role Name>: <Number of people to elect>
+...
+```
+Roles who only need one person elected for them do not need to be included in this file. The role name must be the same as on the Google form.
 
 Then also make sure you have installed all dependencies with `pip3 install -r requirements.txt`
 

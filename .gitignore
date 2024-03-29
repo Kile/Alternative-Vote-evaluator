@@ -1,5 +1,6 @@
 # This config file should not be leaked as it includes sensitive information (names)
 first_choices.txt 
+extra_roles.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
