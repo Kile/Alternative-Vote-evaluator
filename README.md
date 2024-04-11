@@ -39,4 +39,4 @@ Then also make sure you have installed all dependencies with `pip3 install -r re
 
 
 ## Running the code
-All that is left to do now is running the code! Run it with `python3 main.py`, then paste the spreadsheet link when promted. If you set up the form correctly, the code should not print the winners for each role. If you would like to know more details, such as in what round they were elected and with what percentage and if anyone won a role twice before the code adjusted the result, each action the code did will be logged in `process.log`.
+All that is left to do now is running the code! Run it with `python3 main.py`, then paste the spreadsheet link when promted. If you set up the form correctly, the code should now print the winners for each role. If you would like to know more details, such as in what round they were elected and with what percentage and if anyone won a role twice before the code adjusted the result, each action the code did will be logged in `process.log`.
