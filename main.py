@@ -1,7 +1,26 @@
-# MIT License
-#
-# Copyright (c) 2024, Erik
-# All rights reserved.
+"""
+The MIT License (MIT)
+
+Copyright (c) 2024-present Erik
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+"""
 
 import pandas as pd
 import requests
@@ -9,11 +28,31 @@ from io import StringIO
 from typing import Dict, List
 from numpy import nan
 import logging
+from copy import deepcopy
 
 logging.basicConfig(filename='process.log', level=logging.INFO)
 
+class Tie(list):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __str__(self):
+        return f"TIE: {' and '.join(self)}"
+
 def file_exists(file_path: str) -> bool:
-    """Check if a file exists"""
+    """
+    Check if a file exists
+
+    Parameters
+    ----------
+    file_path: :class:`str`
+        The path to the file to be checked.
+
+    Returns
+    -------
+    :class:`bool`
+        True if the file exists, False otherwise.
+    """
     try:
         with open(file_path, 'r'):
             return True
@@ -26,6 +65,16 @@ def parse_file(file_path: str) -> Dict[str, str | int]:
     key: value
     key: value
     ...
+
+    Parameters
+    ----------
+    file_path: :class:`str`
+        The path to the file to be parsed.
+    
+    Returns
+    -------
+    :class:`Dict[str, str | int]`
+        The parsed data from the file.
     """
     data = {}
     with open(file_path, 'r') as f:
@@ -35,7 +84,19 @@ def parse_file(file_path: str) -> Dict[str, str | int]:
     return data
 
 def get_data(url: str) -> pd.DataFrame:
-    """Fetch data from a google spreadsheet"""
+    """
+    Fetch data from a google spreadsheet
+
+    Parameters
+    ----------
+    url: :class:`str`
+        The url to the google spreadsheet.
+
+    Returns
+    -------
+    :class:`pd.DataFrame`
+        The data from the google spreadsheet.
+    """
     # Get the id of the google spreadsheet
     id = url.split('/')[-2]
 
@@ -45,21 +106,31 @@ def get_data(url: str) -> pd.DataFrame:
 
     return data
 
-def parse_sheet(df: pd.DataFrame) -> Dict[str, Dict[str, Dict[int, int]]]:
+def parse_sheet(df: pd.DataFrame) -> Dict[str, Dict[str, Dict[int, List[int]]]]:
     """
     From the spreadsheet data, parse into dictionary in this format:
     {
         "<role>": {
             "<name>": {
-                1: <score>,
-                2: <score>,
+                1: [<row_number>, <row_number>, ...],
+                2: [<row_number>, <row_number>, ...]
                 // ...
             },
             // ...
         }
     }
+
+    Parameters
+    ----------
+    df: :class:`pd.DataFrame`
+        The data from the google spreadsheet.
+
+    Returns
+    -------
+    :class:`Dict[str, Dict[str, Dict[int, List[int]]]`
+        The parsed data for the roles.
     """
-    data = {}
+    data: Dict[str, Dict[str, Dict[int, List[int]]]] = {}
 
     # Iterate over each column in the DataFrame
     for column in df.columns:
@@ -84,16 +155,24 @@ def parse_sheet(df: pd.DataFrame) -> Dict[str, Dict[str, Dict[int, int]]]:
                 previous_fields = [f"{role} [{i}]" for i in range(1, field_number)]
                 if all(df[field].iloc[index] not in (nan, '') for field in previous_fields):
                     if field_number not in data[role][name]:
-                        data[role][name][field_number] = 1
+                        data[role][name][field_number] = [index]
                     else:
-                        data[role][name][field_number] += 1
+                        data[role][name][field_number].append(index)
 
     return data
 
-def log_parsed(parsed: Dict[str, Dict[str, Dict[int, int]]]) -> None:
+def log_parsed(parsed: Dict[str, Dict[str, Dict[int, List[int]]]]) -> None:
     """
     Log the parsed data in a readable format to a file for later reference.
     
+    Parameters
+    ----------
+    parsed: :class:`Dict[str, Dict[str, Dict[int, List[int]]]`
+        The parsed data for the roles.
+
+    Returns
+    -------
+    None
     """
     logging.info("Parsed data from spreadsheet:")
     for role, data in parsed.items():
@@ -101,15 +180,70 @@ def log_parsed(parsed: Dict[str, Dict[str, Dict[int, int]]]) -> None:
         for name, fields in data.items():
             logging.info(f"\t{name}")
             for field, score in fields.items():
-                logging.info(f"\t\t{field}: {score}")
+                logging.info(f"\t\t{field}: ")
+                logging.info(f"\t\t\ttotal: {len(score)}")
+                logging.info("\t\t\t" + ", ".join(["Row " + str(i) + "'s choice" for i in score]))
+
+def get_first_choice_helper(
+        voter: int,
+        round: int,
+        votes: Dict[str, Dict[int, List[int]]],
+        excluded: List[str]
+    ) -> str | None:
+    """
+    Get the names that a person has previously voted for.
+    
+    Parameters
+    ----------
+    voter: :class:`int`
+        The voter for which the first choices are to be determined.
+    round: :class:`int`
+        The round for which the first choices are to be determined.
+    votes: :class:`Dict[str, Dict[int, List[int]]]`
+        The parsed data for the role.
+    excluded: :class:`List[str]`
+        The names to be excluded from the first choice determination.
+    """
+    # Get the first choice for the voter
+    non_excluded = {name: val for name, val in votes.items() if name not in excluded}
+
+    # Get the first choice for the voter
+    choices = []
+    for r in range(1, round+1):
+        for name, fields in non_excluded.items():
+            if r in fields and voter in fields[r]:
+                choices.append((name, r))
+    
+    if len(choices) == 0:
+        return None
+    # Find the first choice for the voter (lowest round number)
+    first_choice = min(choices, key=lambda x: x[1])[0]
+    return first_choice
 
 def winner_for_role(
         role: str, 
-        data: Dict[str, Dict[int, int]], 
-        excluded: Dict[str, str | List[str]] = {} 
-    ) -> str:
+        data: Dict[str, Dict[int, List[int]]], 
+        rows: int,
+        excluded: Dict[str, List[str]] = {} 
+    ) -> str | Tie[str]:
     """
     Determine the winner for a role based on the parsed data.
+
+    Parameters
+    ----------
+    role: :class:`str`
+        The role for which the winner is to be determined.
+    data: :class:`Dict[str, Dict[int, List[int]]]`
+        The parsed data for the role.
+    rows: :class:`int`
+        The number of rows in the spreadsheet.
+    excluded: :class:`Dict[str, List[str]]`
+        The names to be excluded from the winner determination.
+
+    Returns
+    -------
+    :class:`str`
+        The winner for the role. Could be multiple winners if needed, or a tie.
     """
     # Check if there is only one non excluded candidate left
     match len(data) - len(excluded.get(role, [])):
@@ -124,38 +258,75 @@ def winner_for_role(
 
     # Loop over each voting rnd (eg 1-MAX key in data.values)
     for rnd in range(1, max(max(fields.keys(), default=0) for fields in data.values()) + 1):
-        # Find the max value for that rnd and total votes
-        max_score_name = None
-        max_score = 0
-        total_votes = 0
-        for name, fields in data.items():
-            if name in excluded.get(role, []):
-                continue
-            if rnd in fields:
-                total_votes += fields[rnd]
-                if fields[rnd] > max_score:
-                    max_score = fields[rnd]
-                    max_score_name = name
-        # If max_score is bigger or equal to half of the total votes, declare a winner
-        if max_score >= total_votes / 2:
-            logging.info(
-                f"Winner for {role} found in round {rnd}: {max_score_name} with {max_score} votes ({max_score/total_votes*100:.2f}%)"
-            )
-            return max_score_name
+        # Get bonux votes for each person as a start for the round.
+        total_votes = {} 
 
-    # If no winner is found, declare the one with the most votes
-    winner = max(data, key=lambda x: sum(data[x].values()))
-    logging.info(f"Winner for {role} found in round {rnd}: {max_score_name} with {max_score} votes ({max_score/total_votes*100:.2f}%)")
-    return winner
+        # Get total votes for each person
+        for row in range(0, rows):
+            # Get first choice for the row that is not excluded
+            first_choice = get_first_choice_helper(row, rnd, data, excluded.get(role, []))
+
+            if first_choice is None:
+                continue
+
+            # Add the vote to the total votes
+            if first_choice not in total_votes:
+                total_votes[first_choice] = 1
+            else:
+                total_votes[first_choice] += 1
+
+        # Get the person with the most votes
+        person, score = max(total_votes.items(), key=lambda x: x[1])
+        all_votes = sum(total_votes.values())
+        threshold = all_votes / 2
+        
+        
+        # Edge case, two people are left and have the same amount of votes
+        if len(
+            two_winners := [
+                name for name in total_votes if total_votes[name] == threshold
+            ]
+        ) > 1:
+            # Return both winners
+            logging.info(f"TIE: Two winners found in round {rnd}: {two_winners}")
+            return Tie(two_winners)
+        
+        logging.info(f"Round {rnd} for {role}: {person} with {score} votes ({score/all_votes*100:.2f}%)")
+        if score >= threshold:
+            logging.info(f"Winner for {role} found in round {rnd}: {person} with {score} votes ({score/all_votes*100:.2f}%)")
+            return person
+
+        # Eliminated least voted
+        min_person, min_score = min(total_votes.items(), key=lambda x: x[1])
+        logging.info(f"Eliminated {min_person} with {min_score} votes ({min_score/all_votes*100:.2f}%)")
+        excluded[role].append(min_person)
+
 
 def determine_winner(
-        parsed: Dict[str, Dict[str, Dict[int, int]]], 
+        parsed: Dict[str, Dict[str, Dict[int, List[int]]]], 
         extra_roles: Dict[str, int],
+        rows: int,
         excluded: Dict[str, str | List[str]] = {}
-        ) -> Dict[str, str | List[str]]:
+    ) -> Dict[str, str | List[str | Tie[str]] | Tie[str]]:
     """
     Returns the winner of each role based on the parsed data. 
     Excludes the names for the role specified in the excluded dictionary.
+
+    Parameters
+    ----------
+    parsed: :class:`Dict[str, Dict[str, Dict[int, List[int]]]`
+        The parsed data for the roles.
+    extra_roles: :class:`Dict[str, int]`
+        The number of winners needed for each role.
+    rows: :class:`int`
+        The number of rows in the spreadsheet.
+    excluded: :class:`Dict[str, str | List[str]]`
+        The names to be excluded from the winner determination.
+
+    Returns
+    -------
+    :class:`Dict[str, str | List[str | Tie[str]] | Tie[str]`
+        The winners for each role.
     """
     logging.info("Determining winners:")
     winners = {}
@@ -171,10 +342,10 @@ def determine_winner(
         for i in range(winners_needed):
             logging.info(f"Finding winner {i+1} for {role}")
             if role in excluded:
-                excluded[role] = [*excluded[role], *loop_winners] 
+                excluded[role] = excluded[role] + loop_winners
             else:
-                excluded[role] = loop_winners
-            winner = winner_for_role(role, data, excluded)
+                excluded[role] = deepcopy(loop_winners) # Shouldn't modify the original list
+            winner = winner_for_role(role, data, rows, excluded)
             loop_winners.append(winner)
 
         winners[role] = loop_winners
@@ -188,9 +359,20 @@ def wins_twice_helper(winners: Dict[str, str | List[str]]) -> Dict[str, List[str
         "<name>": ["<role>", "<role>"], // Roles <name> won
         // ...
     }
+
+    Parameters
+    ----------
+    winners: :class:`Dict[str, str | List[str]]`
+        The winners for each role.
+    
+    Returns
+    -------
+    :class:`Dict[str, List[str]]`
+        The names that won more than once.
     """
     # I apologize for the unreadable code
     all_winners = [item for sublist in winners.values() for item in sublist]
+
     return {
         name: [r for r, w in winners.items() if name in w] for _, names
         in winners.items() 
@@ -199,18 +381,38 @@ def wins_twice_helper(winners: Dict[str, str | List[str]]) -> Dict[str, List[str
     }
 
 def find_winners(
-        parsed: Dict[str, Dict[str, Dict[int, int]]],
+        parsed: Dict[str, Dict[str, Dict[int, List[int]]]],
         first_choices: Dict[str, str],
-        extra_roles: Dict[str, int]
-        ) -> Dict[str, str | List[str]]:
+        extra_roles: Dict[str, int],
+        rows: int
+    ) -> Dict[str, str | List[str]]:
+    """
+    Find the winners for each role based on the parsed data.
+
+    Parameters
+    ----------
+    parsed: :class:`Dict[str, Dict[str, Dict[int, List[int]]]`
+        The parsed data for the roles.
+    first_choices: :class:`Dict[str, str]`
+        The first choices for each role.
+    extra_roles: :class:`Dict[str, int]`
+        The number of winners needed for each role.
+    rows: :class:`int`
+        The number of rows in the spreadsheet.
+
+    Returns
+    -------
+    :class:`Dict[str, str | List[str]`
+        The winners for each role.
+    """
     # Determine initial winners
-    winners = determine_winner(parsed, extra_roles)
+    winners = determine_winner(parsed, extra_roles, rows)
 
     # Check if any name won twice
     while (
             invalid := wins_twice_helper(winners)
         ):
-        logging.error("One or more names won more than once. Re-running counting with preferences.")
+        logging.error(f"Following winners have one more than one role: " + " | ".join([(f"{name}: " + ", ".join(roles)) for name, roles in invalid.items()]))
         # Open first_choices.txt, extract the first choices and add second one to excluded
         excluded: Dict[str, List[str]] = {}
 
@@ -232,18 +434,25 @@ def find_winners(
                     excluded[role].append(name.strip())
                 logging.info(f"Excluding {name} from {role} because {first_choice} is the first choice but {name} won both.")
 
-        winners = determine_winner(parsed, extra_roles, excluded)
+        winners = determine_winner(parsed, extra_roles, rows, excluded)
 
     return winners
 
 def print_winners(winners: Dict[str, str | List[str]]) -> None:
     """
     Print the winners in a readable format.
+
+    Parameters
+    ----------
+    winners: :class:`Dict[str, str | List[str]]`
+        The winners for each role.
     """
     print("Winners:")
     for role, name in winners.items():
         if isinstance(name, list):
             print(f"{role}:")
+            if isinstance(name, Tie): # Do not format Tie, print as __str__
+                print(f"\t{name}")
             for n in name:
                 print(f"\t{n}")
         else:
@@ -275,7 +484,8 @@ def main():
     winners = find_winners(
         parsed,
         parse_file('first_choices.txt'),
-        parse_file('extra_roles.txt') if file_exists('extra_roles.txt') else {}
+        parse_file('extra_roles.txt') if file_exists('extra_roles.txt') else {},
+        len(data)
     )
 
     logging.info("Winners declared successfully.")
