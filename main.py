@@ -293,6 +293,8 @@ def winner_for_role(
                 total_votes[first_choice] += 1
 
         # Get the person with the most votes
+        if not any(total_votes.items()):
+            return "RON"
         person, score = max(total_votes.items(), key=lambda x: x[1])
         all_votes = sum(total_votes.values())
         threshold = all_votes / 2
@@ -380,11 +382,15 @@ def determine_winner(
     return winners
 
 
-def wins_twice_helper(winners: Dict[str, str | List[str]]) -> Dict[str, List[str]]:
+def won_with_backup(
+    winners: Dict[str, str | Tie[str] | List[str | Tie[str]]],
+    parsed: Dict[str, Dict[str, Dict[int, List[int]]]],
+    excluded: Dict[str, str | List[str]],
+) -> Dict[str, List[str]]:
     """
-    Helper function to determine if a name won more than once. Returns a dictionary in format:
+    Helper function to determine if a name that has a backup. Will not show up if they are already excluded. Returns a dictionary in format:
     {
-        "<name>": ["<role>", "<role>"], // Roles <name> won
+        "<name>": ["<role>"], // Roles <name> won
         // ...
     }
 
@@ -393,20 +399,56 @@ def wins_twice_helper(winners: Dict[str, str | List[str]]) -> Dict[str, List[str
     winners: :class:`Dict[str, str | List[str]]`
         The winners for each role.
 
+    parsed: :class:`Dict[str, Dict[str, Dict[int, List[int]]]`
+        The parsed data for the roles.
+
+    excluded: :class:`Dict[str, str | List[str]]`
+        The names to be excluded from the winner determination.
+
     Returns
     -------
     :class:`Dict[str, List[str]]`
-        The names that won more than once.
+        The names that won with a backup.
     """
-    # I apologize for the unreadable code
-    all_winners = [item for sublist in winners.values() for item in sublist]
 
-    return {
-        name: [r for r, w in winners.items() if name in w]
-        for _, names in winners.items()
-        for name in names
-        if all_winners.count(name) > 1 and name != "RON"
-    }
+    res: Dict[str, List[str]] = {}
+    for role, names in winners.items():
+        for name in names:
+            if isinstance(name, Tie):
+                for n in name:
+                    if (
+                        len(
+                            [
+                                n
+                                for d in parsed.values()
+                                if n in d.keys()
+                            ]
+                        )
+                        > 1
+                        and n != "RON"
+                        and n not in excluded.get(role, [])
+                    ):
+                        if n not in res:
+                            res[n] = []
+                        res[n].append(role)
+            else:
+                if (
+                    len(
+                        [
+                            name
+                            for d in parsed.values()
+                            if name in d.keys()
+                        ]
+                    )
+                    > 1
+                    and name != "RON"
+                    and name not in excluded.get(role, [])
+                ):
+                    if name not in res:
+                        res[name] = []
+                    res[name].append(role)
+    return res
+
 
 
 def find_winners(
@@ -436,21 +478,47 @@ def find_winners(
     """
     # Determine initial winners
     winners = determine_winner(parsed, extra_roles, rows)
+    excluded: Dict[str, List[str]] = {}
 
     # Check if any name won twice
-    while invalid := wins_twice_helper(winners):
+    while invalid := won_with_backup(winners, parsed, excluded):
+
         logging.error(
-            f"Following winners have one more than one role: "
+            f"Following winners have won a role while also having a backup: "
             + " | ".join(
                 [(f"{name}: " + ", ".join(roles)) for name, roles in invalid.items()]
             )
         )
         # Open first_choices.txt, extract the first choices and add second one to excluded
-        excluded: Dict[str, List[str]] = {}
 
         # Exclude from role that is NOT first_choice
         # if name is in invalid
         for name, roles in invalid.items():
+            # Only won one role: exclude from other roles
+            if len(roles) == 1:
+                # Find other roles that person ran for
+                other_roles = [
+                    role
+                    for role in parsed
+                    if any(
+                        [
+                            name in k if isinstance(k, Tie) else name == k
+                            for k in parsed[role].keys()
+                        ]
+                    )
+                    and role != roles[0]
+                ]
+                for role in other_roles:
+                    if role not in excluded:
+                        excluded[role] = [name.strip()]
+                    else:
+                        excluded[role].append(name.strip())
+                logging.info(
+                    f"Excluding {name} from {role} because they won {roles[0]} so the counting for the other role has to be redone."
+                )
+                continue
+
+            # Won more than two roles: find first choice
             if name not in first_choices:
                 logging.error(f"Role {name} not found in first_choices.txt.")
                 raise ValueError(f"Role {name} not found in first_choices.txt.")
@@ -459,7 +527,7 @@ def find_winners(
             for role in roles:
                 if role == first_choice:  # Not exclude from first choice
                     continue
-                # Exlude from other roles
+                # Exclude from other roles
                 if role not in excluded:
                     excluded[role] = [name.strip()]
                 else:
